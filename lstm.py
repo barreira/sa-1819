@@ -9,19 +9,18 @@ from keras.layers.recurrent import LSTM
 from keras.utils import plot_model
 from sklearn.preprocessing import MinMaxScaler
 
-np.random.seed(9)
 pd.options.mode.chained_assignment = None  # gets rid of warning on line 28
+np.random.seed(9)
 
 
-def load(file_name='sales.csv'):
-    sales = pd.read_csv(file_name, header=0, names=['Month', 'Advertising', 'Sales'])
+def load(file='sales.csv'):
+    sales = pd.read_csv(file, header=0, names=['Month', 'Advertising', 'Sales'])
     df = pd.DataFrame(sales)
 
     return df
 
 
 def preprocess(df):
-
     # 'Month' + 'Season'
 
     for idx, month in enumerate(df['Month']):
@@ -44,6 +43,10 @@ def preprocess(df):
     df = pd.get_dummies(df, columns=['Season'], prefix='', prefix_sep='')  # one-hot encoding of 'Season'
     df = df.rename(season_names, axis='columns')  # didn't do this from the start to preserve order of seasons
 
+    m = list(months.keys())  # ['Jan', 'Feb', ..., 'Nov', 'Dec']
+    s = list(season_names.values())  # ['Winter', 'Spring', 'Summer', 'Autumn']
+    df = df[m + s + ['Advertising', 'Sales']]  # reorder columns so as to have 'Advertising' and 'Sales' last
+
     # Normalize 'Advertising' and 'Sales' values
 
     scaler = MinMaxScaler()
@@ -55,41 +58,43 @@ def preprocess(df):
 def visualize():
     df = load()
     print('### Before preprocessing ###')
-    print(df.head(), '\n')
+    print(df.head())
     df = preprocess(df)
     print('### After preprocessing ###')
-    print(df.head(), '\n')
+    print(df.head())
 
 
-def train_test_split(df_dados, janela):
-    qt_atributos = len(df_dados.columns)
-    mat_dados = df_dados.as_matrix()  # converter dataframe para matriz (lista com lista de cada registo)
-    tam_sequencia = janela + 1
+def train_test_split(df, sliding_window, train_size):
+    num_features = len(df.columns)
+    sequence_len = sliding_window + 1
 
     res = []
-    for i in range(len(mat_dados) - tam_sequencia):  # numero de registos - tamanho da sequencia
-        res.append(mat_dados[i: i + tam_sequencia])
-    res = np.array(res)  # dá como resultado um np com uma lista de matrizes (janela deslizante ao longo da serie)
+    for i in range(len(df.values) - sequence_len):
+        res.append(df.values[i: i + sequence_len])
+    res = np.array(res)  # numpy array of matrices (sliding window across values)
 
-    train = res[-12:, :]
-    x_train = train[:, :-1]  # menos um registo pois o ultimo registo é o registo a seguir à janela
-    y_train = train[:, -1][:, -1]  # para ir buscar o último atributo para a lista dos labels
-    x_test = res[:24, :-1]
-    y_test = res[:24:, -1][:, -1]
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], qt_atributos))
-    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], qt_atributos))
+    # print('res', res.shape)
+
+    train = res[:train_size, :]
+    x_train = train[:, :-1]  # last value is the last y after the sliding window
+    y_train = train[:, -1][:, -1]  # get last value of each matrix corresponding to the label
+    x_test = res[-train_size:, :-1]
+    y_test = res[-train_size:, -1][:, -1]
+
+    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], num_features))
+    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], num_features))
 
     return [x_train, y_train, x_test, y_test]
 
 
-def build_model(janela):
+def build_model(sliding_window, num_features):
     model = Sequential()
-    model.add(LSTM(64, input_shape=(janela, 3), return_sequences=True))
+    model.add(LSTM(64, input_shape=(sliding_window, num_features), return_sequences=True))
+    model.add(Dropout(0.2))
+    model.add(LSTM(32, input_shape=(sliding_window, num_features), return_sequences=False))
     # model.add(Dropout(0.2))
-    model.add(LSTM(32, input_shape=(janela, 3), return_sequences=False))
-    # model.add(Dropout(0.2))
-    model.add(Dense(16, activation="relu", kernel_initializer="uniform"))
-    model.add(Dense(1, activation="linear", kernel_initializer="uniform"))
+    model.add(Dense(16, activation='relu', kernel_initializer='uniform'))
+    model.add(Dense(1, activation='linear', kernel_initializer='uniform'))
     model.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
 
     return model
@@ -99,17 +104,17 @@ def print_model(model, file):
     plot_model(model, to_file=file, show_shapes=True, show_layer_names=True)
 
 
-def print_series_prediction(y_test, predic):
+def print_predictions(y_test, predictions):
     diff = []
     ratio = []
 
     for i in range(len(y_test)):
-        ratio.append((y_test[i] / predic[i]) - 1)
-        diff.append(abs(y_test[i] - predic[i]))
-        print('valor: %f ---> Previsão: %f Diff: %f Racio: %f' % (y_test[i], predic[i], diff[i], ratio[i]))
+        ratio.append((y_test[i] / predictions[i]) - 1)
+        diff.append(abs(y_test[i] - predictions[i]))
+        print('Value: %f ---> Prediction: %f Diff: %f Ratio: %f' % (y_test[i], predictions[i], diff[i], ratio[i]))
 
     plt.plot(y_test, color='blue', label='y_test')
-    plt.plot(predic, color='red', label='prediction')  # este deu uma linha em branco
+    plt.plot(predictions, color='red', label='prediction')
     plt.plot(diff, color='green', label='diff')
     plt.plot(ratio, color='yellow', label='ratio')
     plt.legend(loc='upper left')
@@ -117,34 +122,36 @@ def print_series_prediction(y_test, predic):
     plt.show()
 
 
-def lstm():
+def lstm(sliding_window=12, train_size=24):
+    """
+    :param sliding_window: Number of past months used to make prediction of current month
+    :param train_size: How many months should be used for training (the rest will be used for testing)
+    """
     df = load()
     df = preprocess(df)
-    print("df", df.shape)
+    print('df', df.shape)
 
-    sliding_window = 12
-    x_train, y_train, x_test, y_test = train_test_split(df[::-1], sliding_window)  # o df[::-1] é o df por ordem inversa
-    print("x_train", x_train.shape)
-    print("y_train", y_train.shape)
-    print("x_test", x_test.shape)
-    print("y_test", y_test.shape)
+    x_train, y_train, x_test, y_test = train_test_split(df[::-1], sliding_window, train_size)
+    print('x_train', x_train.shape)
+    print('y_train', y_train.shape)
+    print('x_test', x_test.shape)
+    print('y_test', y_test.shape)
 
-    model = build_model(sliding_window)
+    model = build_model(sliding_window, len(df.columns))
     model.fit(x_train, y_train, batch_size=512, epochs=500, validation_split=0.1, verbose=1)
-    print_model(model, "lstm_model.png")
+    print_model(model, 'lstm_model.png')
 
     train_score = model.evaluate(x_train, y_train, verbose=0)
-    print('Train Score: %.2f MSE (%.2f RMSE)' % (train_score[0], math.sqrt(train_score[0])))
+    print('Train Score: %.3f MSE (%.3f RMSE)' % (train_score[0], math.sqrt(train_score[0])))
 
     test_score = model.evaluate(x_test, y_test, verbose=0)
-    print('Test Score: %.2f MSE (%.2f RMSE)' % (test_score[0], math.sqrt(test_score[0])))
+    print('Test Score: %.3f MSE (%.3f RMSE)' % (test_score[0], math.sqrt(test_score[0])))
     print(model.metrics_names)
 
-    p = model.predict(x_test)
-    predic = np.squeeze(np.asarray(p))  # transformar uma matriz de uma coluna e n linhas num np array de n elementos
-    print_series_prediction(y_test, predic)
+    predictions = model.predict(x_test)
+    print_predictions(y_test, np.squeeze(np.asarray(predictions)))
 
 
 if __name__ == '__main__':
-    visualize()
+    # visualize()
     lstm()
