@@ -7,9 +7,8 @@ from keras.models import Sequential
 from keras.layers.core import Dense, Dropout
 from keras.layers.recurrent import LSTM
 from keras.utils import plot_model
-from sklearn.preprocessing import MinMaxScaler
 
-pd.options.mode.chained_assignment = None  # gets rid of warning on line 28
+pd.options.mode.chained_assignment = None  # gets rid of warning in preprocess
 np.random.seed(9)
 
 
@@ -47,11 +46,6 @@ def preprocess(df):
     s = list(season_names.values())  # ['Winter', 'Spring', 'Summer', 'Autumn']
     df = df[m + s + ['Advertising', 'Sales']]  # reorder columns so as to have 'Advertising' and 'Sales' last
 
-    # Normalize 'Advertising' and 'Sales' values
-
-    scaler = MinMaxScaler()
-    df[['Advertising', 'Sales']] = scaler.fit_transform(df[['Advertising', 'Sales']])  # values to interval [0..1]
-
     return df
 
 
@@ -69,17 +63,15 @@ def train_test_split(df, sliding_window, train_size):
     sequence_len = sliding_window + 1
 
     res = []
-    for i in range(len(df.values) - sequence_len):
+    for i in range(len(df.values) - sliding_window):
         res.append(df.values[i: i + sequence_len])
     res = np.array(res)  # numpy array of matrices (sliding window across values)
-
-    # print('res', res.shape)
 
     train = res[:train_size, :]
     x_train = train[:, :-1]  # last value is the last y after the sliding window
     y_train = train[:, -1][:, -1]  # get last value of each matrix corresponding to the label
-    x_test = res[-train_size:, :-1]
-    y_test = res[-train_size:, -1][:, -1]
+    x_test = res[train_size:, :-1]
+    y_test = res[train_size:, -1][:, -1]
 
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], num_features))
     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], num_features))
@@ -90,7 +82,7 @@ def train_test_split(df, sliding_window, train_size):
 def build_model(sliding_window, num_features):
     model = Sequential()
     model.add(LSTM(64, input_shape=(sliding_window, num_features), return_sequences=True))
-    model.add(Dropout(0.2))
+    # model.add(Dropout(0.2))
     model.add(LSTM(32, input_shape=(sliding_window, num_features), return_sequences=False))
     # model.add(Dropout(0.2))
     model.add(Dense(16, activation='relu', kernel_initializer='uniform'))
@@ -104,25 +96,33 @@ def print_model(model, file):
     plot_model(model, to_file=file, show_shapes=True, show_layer_names=True)
 
 
+def print_history_loss(history):
+    print(history.history.keys())
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    plt.show()
+
+
 def print_predictions(y_test, predictions):
     diff = []
-    ratio = []
 
     for i in range(len(y_test)):
-        ratio.append((y_test[i] / predictions[i]) - 1)
         diff.append(abs(y_test[i] - predictions[i]))
-        print('Value: %f ---> Prediction: %f Diff: %f Ratio: %f' % (y_test[i], predictions[i], diff[i], ratio[i]))
+        print('Value: %f ---> Prediction: %f Diff: %f' % (y_test[i], predictions[i], diff[i]))
 
     plt.plot(y_test, color='blue', label='y_test')
     plt.plot(predictions, color='red', label='prediction')
     plt.plot(diff, color='green', label='diff')
-    plt.plot(ratio, color='yellow', label='ratio')
     plt.legend(loc='upper left')
 
     plt.show()
 
 
-def lstm(sliding_window=12, train_size=24):
+def lstm(sliding_window=3, train_size=24):
     """
     :param sliding_window: Number of past months used to make prediction of current month
     :param train_size: How many months should be used for training (the rest will be used for testing)
@@ -138,7 +138,9 @@ def lstm(sliding_window=12, train_size=24):
     print('y_test', y_test.shape)
 
     model = build_model(sliding_window, len(df.columns))
-    model.fit(x_train, y_train, batch_size=512, epochs=500, validation_split=0.1, verbose=1)
+    history = model.fit(x_train, y_train, batch_size=512, epochs=500, validation_data=(x_test, y_test), verbose=1)
+
+    print_history_loss(history)
     print_model(model, 'lstm_model.png')
 
     train_score = model.evaluate(x_train, y_train, verbose=0)
