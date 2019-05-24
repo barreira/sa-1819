@@ -173,7 +173,7 @@ def lstm(sliding_window=3, train_size=24):
     print('y_test', y_test.shape)
 
     model = build_model(sliding_window, len(df.columns))
-    history = model.fit(x_train, y_train, epochs=115, validation_data=(x_test, y_test), verbose=1)
+    history = model.fit(x_train, y_train, batch_size=16, epochs=115, validation_data=(x_test, y_test), verbose=1)
 
     print_history_loss(history)
     print_model(model, 'lstm_model.png')
