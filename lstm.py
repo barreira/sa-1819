@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -7,8 +8,9 @@ from keras.models import Sequential
 from keras.layers.core import Dense, Dropout
 from keras.layers.recurrent import LSTM
 from keras.utils import plot_model
+from keras.layers import LeakyReLU
 
-pd.options.mode.chained_assignment = None  # gets rid of warning in preprocess
+pd.options.mode.chained_assignment = None  # gets rid of warning in line 26
 np.random.seed(9)
 
 
@@ -20,8 +22,6 @@ def load(file='sales.csv'):
 
 
 def preprocess(df):
-    # 'Month' + 'Season'
-
     for idx, month in enumerate(df['Month']):
         df['Month'][idx] = month.split('-')[-1]  # e.g. '01-Jan' -> 'Jan'
 
@@ -49,11 +49,43 @@ def preprocess(df):
     return df
 
 
+def describe(df):
+
+    def mkdir(dir_name):
+        try:
+            os.rmdir(dir_name)
+        except OSError:
+            pass
+        try:
+            os.mkdir(dir_name)
+        except OSError:
+            pass
+
+    # Print dataset description to file
+
+    print(df.describe(), file=open('dataset_description.txt', 'w'))
+
+    # Generate feature distribution graphs to files inside 'dist' folder
+
+    name = 'dist'
+    mkdir(name)
+
+    for key in df.keys():
+        if key != 'Month':
+            df.hist(column=key)
+            fig_name = name + '-' + key.lower() + '.png'
+            plt.savefig(name + '/' + fig_name)
+
+
 def visualize():
     df = load()
+
     print('### Before preprocessing ###')
     print(df.head())
+
+    describe(df)
     df = preprocess(df)
+
     print('### After preprocessing ###')
     print(df.head())
 
@@ -82,12 +114,15 @@ def train_test_split(df, sliding_window, train_size):
 def build_model(sliding_window, num_features):
     model = Sequential()
     model.add(LSTM(64, input_shape=(sliding_window, num_features), return_sequences=True))
-    # model.add(Dropout(0.2))
-    model.add(LSTM(32, input_shape=(sliding_window, num_features), return_sequences=False))
-    # model.add(Dropout(0.2))
-    model.add(Dense(16, activation='relu', kernel_initializer='uniform'))
-    model.add(Dense(1, activation='linear', kernel_initializer='uniform'))
-    model.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
+    model.add(Dropout(0.2))
+    model.add(LSTM(32, input_shape=(sliding_window, num_features)))
+    model.add(Dropout(0.2))
+    model.add(Dense(16))
+    model.add(LeakyReLU())
+    model.add(Dropout(0.2))
+    model.add(Dense(1))
+    model.add(LeakyReLU())
+    model.compile(loss='mse', optimizer='adadelta', metrics=['accuracy'])
 
     return model
 
@@ -103,7 +138,7 @@ def print_history_loss(history):
     plt.title('model loss')
     plt.ylabel('loss')
     plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
+    plt.legend(['train', 'validation'], loc='upper left')
     plt.show()
 
 
@@ -116,7 +151,7 @@ def print_predictions(y_test, predictions):
 
     plt.plot(y_test, color='blue', label='y_test')
     plt.plot(predictions, color='red', label='prediction')
-    plt.plot(diff, color='green', label='diff')
+    # plt.plot(diff, color='green', label='diff')
     plt.legend(loc='upper left')
 
     plt.show()
@@ -138,7 +173,7 @@ def lstm(sliding_window=3, train_size=24):
     print('y_test', y_test.shape)
 
     model = build_model(sliding_window, len(df.columns))
-    history = model.fit(x_train, y_train, batch_size=512, epochs=500, validation_data=(x_test, y_test), verbose=1)
+    history = model.fit(x_train, y_train, epochs=115, validation_data=(x_test, y_test), verbose=1)
 
     print_history_loss(history)
     print_model(model, 'lstm_model.png')
