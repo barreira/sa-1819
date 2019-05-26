@@ -117,10 +117,10 @@ def build_model(sliding_window, num_features):
     model.add(Dropout(0.2))
     model.add(LSTM(32, input_shape=(sliding_window, num_features)))
     model.add(Dropout(0.2))
-    model.add(Dense(16))
+    model.add(Dense(16))  # default initializer (Glorot Uniform)
     model.add(LeakyReLU())
     model.add(Dropout(0.2))
-    model.add(Dense(1))
+    model.add(Dense(1))  # default initializer (Glorot Uniform)
     model.add(LeakyReLU())
     model.compile(loss='mse', optimizer='adadelta', metrics=['accuracy'])
 
@@ -190,5 +190,5 @@ def lstm(sliding_window=3, train_size=24):
 
 
 if __name__ == '__main__':
-    # visualize()
+    visualize()
     lstm()
